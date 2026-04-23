@@ -120,7 +120,14 @@ class ChatCompletionsTransport(ProviderTransport):
         # Codex sanitization: drop reasoning_items / call_id / response_item_id
         sanitized = self.convert_messages(messages)
 
-        # Qwen portal prep AFTER codex sanitization.  If sanitize already
+        # ── Provider profile: single-path when present ──────────
+        _profile = params.get("provider_profile")
+        if _profile:
+            return self._build_kwargs_from_profile(
+                _profile, model, sanitized, tools, params
+            )
+
+        # ── Legacy flag-based path (no profile) ─────────────────
         # deepcopied, reuse that copy via the in-place variant to avoid a
         # second deepcopy.
         is_qwen = params.get("is_qwen_portal", False)
@@ -282,6 +289,111 @@ class ChatCompletionsTransport(ProviderTransport):
         overrides = params.get("request_overrides")
         if overrides:
             api_kwargs.update(overrides)
+
+        return api_kwargs
+
+    def _build_kwargs_from_profile(self, profile, model, sanitized, tools, params):
+        """Build API kwargs using a ProviderProfile — single path, no legacy flags.
+
+        This method replaces the entire flag-based kwargs assembly when a
+        provider_profile is passed. Every quirk comes from the profile object.
+        """
+        from providers.base import OMIT_TEMPERATURE
+
+        # Message preprocessing
+        sanitized = profile.prepare_messages(sanitized)
+
+        # Developer role swap — model-name-based, applies to all providers
+        _model_lower = (model or "").lower()
+        if (
+            sanitized
+            and isinstance(sanitized[0], dict)
+            and sanitized[0].get("role") == "system"
+            and any(p in _model_lower for p in DEVELOPER_ROLE_MODELS)
+        ):
+            sanitized = list(sanitized)
+            sanitized[0] = {**sanitized[0], "role": "developer"}
+
+        api_kwargs: Dict[str, Any] = {
+            "model": model,
+            "messages": sanitized,
+        }
+
+        # Temperature
+        if profile.fixed_temperature is OMIT_TEMPERATURE:
+            pass  # Don't include temperature at all
+        elif profile.fixed_temperature is not None:
+            api_kwargs["temperature"] = profile.fixed_temperature
+        else:
+            # Use caller's temperature if provided
+            temp = params.get("temperature")
+            if temp is not None:
+                api_kwargs["temperature"] = temp
+
+        # Timeout
+        timeout = params.get("timeout")
+        if timeout is not None:
+            api_kwargs["timeout"] = timeout
+
+        # Tools
+        if tools:
+            api_kwargs["tools"] = tools
+
+        # max_tokens resolution — priority: ephemeral > user > profile default
+        max_tokens_fn = params.get("max_tokens_param_fn")
+        ephemeral = params.get("ephemeral_max_output_tokens")
+        user_max = params.get("max_tokens")
+        anthropic_max = params.get("anthropic_max_output")
+
+        if ephemeral is not None and max_tokens_fn:
+            api_kwargs.update(max_tokens_fn(ephemeral))
+        elif user_max is not None and max_tokens_fn:
+            api_kwargs.update(max_tokens_fn(user_max))
+        elif profile.default_max_tokens and max_tokens_fn:
+            api_kwargs.update(max_tokens_fn(profile.default_max_tokens))
+        elif anthropic_max is not None:
+            api_kwargs["max_tokens"] = anthropic_max
+
+        # Provider-specific api_kwargs extras (reasoning_effort, metadata, etc.)
+        reasoning_config = params.get("reasoning_config")
+        extra_body_from_profile, top_level_from_profile = profile.build_api_kwargs_extras(
+            reasoning_config=reasoning_config,
+            supports_reasoning=params.get("supports_reasoning", False),
+            qwen_session_metadata=params.get("qwen_session_metadata"),
+        )
+        api_kwargs.update(top_level_from_profile)
+
+        # extra_body assembly
+        extra_body: Dict[str, Any] = {}
+
+        # Profile's extra_body (tags, provider prefs, vl_high_resolution, etc.)
+        profile_body = profile.build_extra_body(
+            session_id=params.get("session_id"),
+            provider_preferences=params.get("provider_preferences"),
+        )
+        if profile_body:
+            extra_body.update(profile_body)
+
+        # Profile's reasoning/thinking extra_body entries
+        if extra_body_from_profile:
+            extra_body.update(extra_body_from_profile)
+
+        # Merge any pre-built extra_body additions from the caller
+        additions = params.get("extra_body_additions")
+        if additions:
+            extra_body.update(additions)
+
+        # Request overrides (user config)
+        overrides = params.get("request_overrides")
+        if overrides:
+            for k, v in overrides.items():
+                if k == "extra_body" and isinstance(v, dict):
+                    extra_body.update(v)
+                else:
+                    api_kwargs[k] = v
+
+        if extra_body:
+            api_kwargs["extra_body"] = extra_body
 
         return api_kwargs
 
