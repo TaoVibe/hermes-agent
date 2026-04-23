@@ -86,9 +86,38 @@ SILENT_MARKER = "[SILENT]"
 # Resolve Hermes home directory (respects HERMES_HOME override)
 _hermes_home = get_hermes_home()
 
-# File-based lock prevents concurrent ticks from gateway + daemon + systemd timer
+# File-based lock prevents concurrent ticks from gateway + daemon + systemd timer.
+# Keep module-level overrides for tests, but derive the default paths from the
+# current Hermes home at runtime so patching _hermes_home also isolates the lock.
 _LOCK_DIR = _hermes_home / "cron"
 _LOCK_FILE = _LOCK_DIR / ".tick.lock"
+_DEFAULT_LOCK_DIR = _LOCK_DIR
+_DEFAULT_LOCK_FILE = _LOCK_FILE
+
+
+def _tick_lock_paths() -> tuple[Path, Path]:
+    """Return the lock dir/file for the current tick invocation.
+
+    If tests explicitly patch _LOCK_DIR/_LOCK_FILE, respect those overrides.
+    Otherwise, recompute the default under the current _hermes_home so tests and
+    alternate Hermes homes do not all contend on the import-time lock path.
+
+    Pytest-xdist runs multiple test processes against one checkout; give each
+    worker its own lock path so scheduler tests do not spuriously skip work.
+    """
+    lock_dir_overridden = _LOCK_DIR != _DEFAULT_LOCK_DIR
+    lock_file_overridden = _LOCK_FILE != _DEFAULT_LOCK_FILE
+
+    if lock_file_overridden:
+        return _LOCK_FILE.parent, _LOCK_FILE
+    if lock_dir_overridden:
+        return _LOCK_DIR, _LOCK_DIR / ".tick.lock"
+
+    lock_dir = _hermes_home / "cron"
+    xdist_worker = os.getenv("PYTEST_XDIST_WORKER", "").strip()
+    if xdist_worker:
+        lock_dir = lock_dir / xdist_worker
+    return lock_dir, lock_dir / ".tick.lock"
 
 
 def _resolve_origin(job: dict) -> Optional[dict]:
@@ -640,18 +669,11 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
                 f"{prompt}"
             )
 
-    # Always prepend cron execution guidance so the agent knows how
-    # delivery works and can suppress delivery when appropriate.
+    # Keep only the cron-specific delta here; the broader "no user / no follow-up"
+    # guidance already lives in the platform hint from agent/prompt_builder.py.
     cron_hint = (
-        "[SYSTEM: You are running as a scheduled cron job. "
-        "DELIVERY: Your final response will be automatically delivered "
-        "to the user — do NOT use send_message or try to deliver "
-        "the output yourself. Just produce your report/output as your "
-        "final response and the system handles the rest. "
-        "SILENT: If there is genuinely nothing new to report, respond "
-        "with exactly \"[SILENT]\" (nothing else) to suppress delivery. "
-        "Never combine [SILENT] with content — either report your "
-        "findings normally, or say [SILENT] and nothing more.]\n\n"
+        "[SYSTEM: Final responses are automatically delivered; do NOT use send_message. "
+        "If there is genuinely nothing new to report, respond exactly \"[SILENT]\" and nothing else.]\n\n"
     )
     prompt = cron_hint + prompt
     if skills is None:
@@ -1049,12 +1071,13 @@ def tick(verbose: bool = True, adapters=None, loop=None) -> int:
     Returns:
         Number of jobs executed (0 if another tick is already running)
     """
-    _LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    lock_dir, lock_file = _tick_lock_paths()
+    lock_dir.mkdir(parents=True, exist_ok=True)
 
     # Cross-platform file locking: fcntl on Unix, msvcrt on Windows
     lock_fd = None
     try:
-        lock_fd = open(_LOCK_FILE, "w")
+        lock_fd = open(lock_file, "w")
         if fcntl:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         elif msvcrt:

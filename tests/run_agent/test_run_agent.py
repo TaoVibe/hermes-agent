@@ -21,7 +21,8 @@ from agent.codex_responses_adapter import _chat_messages_to_responses_input, _no
 import run_agent
 from run_agent import AIAgent
 from agent.error_classifier import FailoverReason
-from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
+from agent.prompt_builder import DEFAULT_AGENT_IDENTITY, PLATFORM_HINTS
+from cron.scheduler import _build_job_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -797,6 +798,35 @@ class TestBuildSystemPrompt:
     def test_includes_system_message(self, agent):
         prompt = agent._build_system_prompt(system_message="Custom instruction")
         assert "Custom instruction" in prompt
+
+    def test_cron_prompt_layers_platform_hint_with_compact_job_delta(self):
+        with (
+            patch(
+                "run_agent.get_tool_definitions",
+                return_value=_make_tool_defs("web_search"),
+            ),
+            patch("run_agent.check_toolset_requirements", return_value={}),
+            patch("run_agent.OpenAI"),
+        ):
+            cron_agent = AIAgent(
+                api_key="test-key-1234567890",
+                base_url="https://openrouter.ai/api/v1",
+                quiet_mode=True,
+                skip_context_files=True,
+                skip_memory=True,
+                platform="cron",
+            )
+            cron_agent.client = MagicMock()
+
+        system_prompt = cron_agent._build_system_prompt()
+        job_prompt = _build_job_prompt({"prompt": "Generate a report"})
+        combined = f"{system_prompt}\n\n{job_prompt}"
+
+        assert PLATFORM_HINTS["cron"] in system_prompt
+        assert "cannot ask questions" in combined
+        assert "do NOT use send_message" in combined
+        assert combined.count("automatically delivered") == 2
+        assert combined.count("[SILENT]") == 1
 
     def test_memory_guidance_when_memory_tool_loaded(self, agent_with_memory_tool):
         from agent.prompt_builder import MEMORY_GUIDANCE

@@ -799,6 +799,36 @@ class TestGitDestructiveOps:
         dangerous, _, _ = detect_dangerous_command(cmd)
         assert dangerous is False
 
+    def test_git_checkout_path_detected(self):
+        cmd = "git checkout -- src/app.py"
+        dangerous, _, desc = detect_dangerous_command(cmd)
+        assert dangerous is True
+        assert "checkout" in desc.lower()
+
+    def test_git_restore_path_detected(self):
+        cmd = "git restore -- src/app.py"
+        dangerous, _, desc = detect_dangerous_command(cmd)
+        assert dangerous is True
+        assert "restore" in desc.lower()
+
+    def test_git_checkout_dot_detected(self):
+        cmd = "git checkout ."
+        dangerous, _, desc = detect_dangerous_command(cmd)
+        assert dangerous is True
+        assert "unstaged" in desc.lower() or "checkout" in desc.lower()
+
+    def test_git_restore_dot_detected(self):
+        cmd = "git restore ."
+        dangerous, _, desc = detect_dangerous_command(cmd)
+        assert dangerous is True
+        assert "unstaged" in desc.lower() or "restore" in desc.lower()
+
+    def test_git_stash_detected(self):
+        cmd = "git stash"
+        dangerous, _, desc = detect_dangerous_command(cmd)
+        assert dangerous is True
+        assert "stash" in desc.lower()
+
     def test_git_branch_lowercase_d_also_flagged(self):
         """git branch -d triggers approval too — IGNORECASE is global.
 
@@ -808,6 +838,18 @@ class TestGitDestructiveOps:
         cmd = "git branch -d feature-branch"
         dangerous, _, _ = detect_dangerous_command(cmd)
         assert dangerous is True
+
+
+class TestProcessKills:
+    def test_kill_dash_9_detected(self):
+        dangerous, _, desc = detect_dangerous_command("kill -9 12345")
+        assert dangerous is True
+        assert "force-kills" in desc.lower()
+
+    def test_killall_detected(self):
+        dangerous, _, desc = detect_dangerous_command("killall nginx")
+        assert dangerous is True
+        assert "killall" in desc.lower()
 
 
 class TestChmodExecuteCombo:

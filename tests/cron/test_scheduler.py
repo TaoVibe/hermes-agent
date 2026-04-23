@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt
+from cron.scheduler import _resolve_origin, _resolve_delivery_target, _deliver_result, _send_media_via_adapter, run_job, SILENT_MARKER, _build_job_prompt, _tick_lock_paths
 from tools.env_passthrough import clear_env_passthrough
 from tools.credential_files import clear_credential_files
 
@@ -1174,6 +1174,48 @@ class TestBuildJobPromptSilentHint:
         system_pos = result.index("do NOT use send_message")
         prompt_pos = result.index("My custom prompt")
         assert system_pos < prompt_pos
+
+    def test_delivery_guidance_not_duplicated(self):
+        job = {"prompt": "Generate a report"}
+        result = _build_job_prompt(job)
+        assert result.count("automatically delivered") == 1
+
+    def test_delivery_guidance_stays_compact(self):
+        job = {"prompt": "Generate a report"}
+        result = _build_job_prompt(job)
+        assert result.index("Generate a report") < 180
+
+
+class TestTickLockPaths:
+    def test_uses_current_hermes_home_when_defaults_unmodified(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+        new_home = tmp_path / "hermes-home"
+        with patch("cron.scheduler._hermes_home", new_home):
+            lock_dir, lock_file = _tick_lock_paths()
+        assert lock_dir == new_home / "cron"
+        assert lock_file == new_home / "cron" / ".tick.lock"
+
+    def test_appends_xdist_worker_to_default_lock_path(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw3")
+        new_home = tmp_path / "hermes-home"
+        with patch("cron.scheduler._hermes_home", new_home):
+            lock_dir, lock_file = _tick_lock_paths()
+        assert lock_dir == new_home / "cron" / "gw3"
+        assert lock_file == new_home / "cron" / "gw3" / ".tick.lock"
+
+    def test_lock_dir_override_derives_default_file(self, tmp_path):
+        lock_dir = tmp_path / "custom-locks"
+        with patch("cron.scheduler._LOCK_DIR", lock_dir):
+            resolved_dir, resolved_file = _tick_lock_paths()
+        assert resolved_dir == lock_dir
+        assert resolved_file == lock_dir / ".tick.lock"
+
+    def test_lock_file_override_controls_both_paths(self, tmp_path):
+        lock_file = tmp_path / "custom-locks" / "custom.lock"
+        with patch("cron.scheduler._LOCK_FILE", lock_file):
+            resolved_dir, resolved_file = _tick_lock_paths()
+        assert resolved_dir == lock_file.parent
+        assert resolved_file == lock_file
 
 
 class TestParseWakeGate:

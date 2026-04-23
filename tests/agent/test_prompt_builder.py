@@ -24,6 +24,7 @@ from agent.prompt_builder import (
     TOOL_USE_ENFORCEMENT_GUIDANCE,
     TOOL_USE_ENFORCEMENT_MODELS,
     OPENAI_MODEL_EXECUTION_GUIDANCE,
+    GOOGLE_MODEL_OPERATIONAL_GUIDANCE,
     MEMORY_GUIDANCE,
     SESSION_SEARCH_GUIDANCE,
     PLATFORM_HINTS,
@@ -1032,6 +1033,11 @@ class TestToolUseEnforcementGuidance:
         assert "describe" in TOOL_USE_ENFORCEMENT_GUIDANCE.lower()
         assert "promise" in TOOL_USE_ENFORCEMENT_GUIDANCE.lower()
 
+    def test_guidance_requires_same_turn_tool_call(self):
+        text = TOOL_USE_ENFORCEMENT_GUIDANCE.lower()
+        assert "same turn" in text
+        assert "tool call" in text
+
     def test_guidance_requires_action(self):
         assert "MUST" in TOOL_USE_ENFORCEMENT_GUIDANCE
 
@@ -1067,6 +1073,12 @@ class TestOpenAIModelExecutionGuidance:
         assert "verification" in text or "verify" in text
         assert "correctness" in text
 
+    def test_guidance_names_core_tool_mappings(self):
+        text = OPENAI_MODEL_EXECUTION_GUIDANCE.lower()
+        assert "terminal/execute_code" in text
+        assert "read_file/search_files" in text
+        assert "web_search" in text
+
     def test_guidance_covers_missing_context(self):
         text = OPENAI_MODEL_EXECUTION_GUIDANCE.lower()
         assert "missing_context" in text or "missing context" in text
@@ -1081,6 +1093,11 @@ class TestOpenAIModelExecutionGuidance:
     def test_guidance_is_string(self):
         assert isinstance(OPENAI_MODEL_EXECUTION_GUIDANCE, str)
         assert len(OPENAI_MODEL_EXECUTION_GUIDANCE) > 100
+
+    def test_guidance_stays_within_compact_budget(self):
+        assert len(TOOL_USE_ENFORCEMENT_GUIDANCE) <= 330
+        assert len(OPENAI_MODEL_EXECUTION_GUIDANCE) <= 2100
+        assert len(GOOGLE_MODEL_OPERATIONAL_GUIDANCE) <= 400
 
 
 # =========================================================================

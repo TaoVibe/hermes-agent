@@ -132,6 +132,12 @@ DANGEROUS_PATTERNS = [
     (r'\bgit\s+push\b.*-f\b', "git force push short flag (rewrites remote history)"),
     (r'\bgit\s+clean\s+-[^\s]*f', "git clean with force (deletes untracked files)"),
     (r'\bgit\s+branch\s+-D\b', "git branch force delete"),
+    (r'\bgit\s+checkout(\s+HEAD)?\s+--\s+', "git checkout -- <path> (discards tracked file changes)"),
+    (r'\bgit\s+restore(\s+--source=\S+)?\s+--\s+', "git restore -- <path> (discards tracked file changes)"),
+    (r'\bgit\s+(checkout|restore)\s+\.\s*$', "git checkout/restore . (discards all unstaged changes)"),
+    (r'\bgit\s+stash\b', "git stash (hides working tree state and breaks coordination)"),
+    (r'\bkill\s+-9\b', "kill -9 (force-kills processes)"),
+    (r'\bkillall\b', "killall (force-kills processes by name)"),
     # Script execution after chmod +x — catches the two-step pattern where
     # a script is first made executable then immediately run. The script
     # content may contain dangerous commands that individual patterns miss.
