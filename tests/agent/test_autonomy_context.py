@@ -2,8 +2,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from agent.autonomy_context import (
     AutonomyBranch,
     build_autonomy_context_block,

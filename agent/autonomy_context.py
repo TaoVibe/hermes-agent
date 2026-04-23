@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 _AUTONOMOUS_TRIGGER_PHRASES = (
     "run autonomously",
